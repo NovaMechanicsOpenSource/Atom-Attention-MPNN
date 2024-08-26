@@ -146,17 +146,12 @@ class MPN(nn.Module):
                  atom_fdim: int = None,
                  bond_fdim: int = None):
         super(MPN, self).__init__()
-        self.atom_fdim = atom_fdim or get_atom_fdim(overwrite_default_atom=args.overwrite_default_atom_features)
-        self.bond_fdim = bond_fdim or get_bond_fdim(overwrite_default_atom=args.overwrite_default_atom_features,
-                                                    overwrite_default_bond=args.overwrite_default_bond_features,
-                                                    atom_messages=args.atom_messages)
+        self.atom_fdim = atom_fdim or get_atom_fdim()
+        self.bond_fdim = bond_fdim or get_bond_fdim(atom_messages=args.atom_messages)
 
         self.features_only = args.features_only
         self.use_input_features = args.use_input_features
         self.device = args.device
-        self.overwrite_default_atom_features = args.overwrite_default_atom_features
-        self.overwrite_default_bond_features = args.overwrite_default_bond_features
-
 
         if self.features_only:
             return

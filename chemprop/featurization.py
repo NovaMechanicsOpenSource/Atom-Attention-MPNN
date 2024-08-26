@@ -41,9 +41,9 @@ BOND_FDIM = 14
 EXTRA_BOND_FDIM = 0
 
 
-def get_atom_fdim(overwrite_default_atom: bool = False) -> int:
+def get_atom_fdim() -> int:
     """Gets the dimensionality of the atom feature vector."""
-    return (not overwrite_default_atom) * ATOM_FDIM + EXTRA_ATOM_FDIM
+    return ATOM_FDIM + EXTRA_ATOM_FDIM
 
 
 def set_extra_atom_fdim(extra):
@@ -52,14 +52,9 @@ def set_extra_atom_fdim(extra):
     EXTRA_ATOM_FDIM = extra
 
 
-def get_bond_fdim(atom_messages: bool = False,
-                  overwrite_default_bond: bool = False,
-                  overwrite_default_atom: bool = False) -> int:
+def get_bond_fdim(atom_messages: bool = False) -> int:
     """Gets the dimensionality of the bond feature vector."""
-
-    return (not overwrite_default_bond) * BOND_FDIM + EXTRA_BOND_FDIM + \
-           (not atom_messages) * \
-        get_atom_fdim(overwrite_default_atom=overwrite_default_atom)
+    return BOND_FDIM + EXTRA_BOND_FDIM + (not atom_messages) * get_atom_fdim()
 
 
 def set_extra_bond_fdim(extra):

@@ -25,7 +25,7 @@ SPACE = {
     'ffn_num_layers': hp.choice('ffn_num_layers', [2,3])
     #'num_heads': hp.quniform('num_heads', low=2, high=6, q=2)
     }
-#INT_KEYS = ['hidden_size', 'depth']
+
 INT_KEYS = ['depth', 'dropout', 'batch_size']
 @timeit(logger_name=HYPEROPT_LOGGER_NAME)
 def hyperopt(args: HyperoptArgs) -> None:
@@ -34,7 +34,6 @@ def hyperopt(args: HyperoptArgs) -> None:
 
     def objective(hyperparams: Dict[str, Union[int, float]]) -> float:
         for key in INT_KEYS:
-            print('INT_KEYS', INT_KEYS)
             hyperparams[key] = int(hyperparams[key])
         hyper_args = deepcopy(args)
         if args.save_dir is not None:
@@ -49,7 +48,6 @@ def hyperopt(args: HyperoptArgs) -> None:
         logger.info(hyperparams)
 
         mean_score_val, std_score_val, mean_score_ts, std_score_ts = cross_validate(args=hyper_args, train_func=run_training)
-        print('heeeeeeeeeere 180724')
 
         temp_model = MoleculeModel(hyper_args)
 

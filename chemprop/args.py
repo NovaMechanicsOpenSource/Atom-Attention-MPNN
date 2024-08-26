@@ -191,7 +191,7 @@ class TrainArgs(CommonArgs):
     """Path to separate val set, optional."""
     separate_test_path: str = None
     """Path to separate test set, optional."""
-    split_type: Literal['random', 'scaffold_balanced', 'predetermined', 'crossval', 'cv', 'index_predetermined'] = 'random'
+    split_type: Literal['random', 'scaffold_balanced', 'crossval', 'cv'] = 'random'
     """Method of splitting the data into train/val/test."""
     split_sizes: Tuple[float, float, float] = (0.8, 0.1, 0.1)
     """Split proportions for train/validation/test sets."""
@@ -286,16 +286,8 @@ class TrainArgs(CommonArgs):
     """Maximum magnitude of gradient during training."""
     class_balance: bool = False
     """Trains with an equal number of positives and negatives in each batch."""
-
-    overwrite_default_atom_features: bool = False
-    """
-    Overwrites the default atom descriptors with the new ones instead of concatenating them.
-    Can only be used if atom_descriptors are used as a feature.
-    """
     no_atom_descriptor_scaling: bool = False
     """Turn off atom feature scaling."""
-    overwrite_default_bond_features: bool = False
-    """Overwrites the default atom descriptors with the new ones instead of concatenating them"""
     no_bond_features_scaling: bool = False
     """Turn off atom feature scaling."""
 
@@ -411,16 +403,13 @@ class TrainArgs(CommonArgs):
             raise ValueError('Undirected is unnecessary when using atom_messages '
                              'since atom_messages are by their nature undirected.')
 
-        if not (self.split_type == 'predetermined') == (self.folds_file is not None) == (self.test_fold_index is not None):
-            raise ValueError('When using predetermined split type, must provide folds_file and test_fold_index.')
-
         if not (self.split_type == 'crossval') == (self.crossval_index_dir is not None):
             raise ValueError('When using crossval split type, must provide crossval_index_dir.')
 
-        if not (self.split_type in ['crossval', 'index_predetermined']) == (self.crossval_index_file is not None):
-            raise ValueError('When using crossval or index_predetermined split type, must provide crossval_index_file.')
+        if not (self.split_type in ['crossval']) == (self.crossval_index_file is not None):
+            raise ValueError('When using crossval split type, must provide crossval_index_file.')
 
-        if self.split_type in ['crossval', 'index_predetermined']:
+        if self.split_type in ['crossval']:
             with open(self.crossval_index_file, 'rb') as rf:
                 self._crossval_index_sets = pickle.load(rf)
             self.num_folds = len(self.crossval_index_sets)
@@ -436,11 +425,6 @@ class TrainArgs(CommonArgs):
         if self.separate_test_path is not None and self.atom_descriptors is not None \
                 and self.separate_test_atom_descriptors_path is None:
             raise ValueError('Atom descriptors are required for the separate test set.')
-
-
-        if self.overwrite_default_atom_features and self.atom_descriptors != 'feature':
-            raise NotImplementedError('Overwriting of the default atom descriptors can only be used if the'
-                                      'provided atom descriptors are features.')
 
         if not self.atom_descriptor_scaling and self.atom_descriptors is None:
             raise ValueError('Atom descriptor scaling is only possible if additional atom features are provided.')
@@ -477,8 +461,6 @@ class InterpretArgs(CommonArgs):
     """Path to data CSV file."""
     batch_size: int = 500
     """Batch size."""
-    property_id: int = 1
-    """Index of the property of interest in the trained model."""
     rollout: int = 20
     """Number of rollout steps."""
     c_puct: float = 10.0

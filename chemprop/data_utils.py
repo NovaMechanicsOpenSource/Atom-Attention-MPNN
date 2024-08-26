@@ -255,29 +255,6 @@ def split_data(data: MoleculeDataset,
         train, val, test = tuple(data_split)
         return MoleculeDataset(train), MoleculeDataset(val), MoleculeDataset(test)
 
-    elif split_type == 'cv_original':
-        if num_folds <= 1 or num_folds > len(data):
-            raise ValueError(
-                'Number of folds for cross-validation must be between 2 and len(data), inclusive.')
-
-        random = Random(0)
-
-        indices = np.repeat(np.arange(num_folds), 1 + len(data) // num_folds)[:len(data)]
-        random.shuffle(indices)
-        test_index = seed % num_folds
-        val_index = (seed + 1) % num_folds
-
-        train, val, test = [], [], []
-        for d, index in zip(data, indices):
-            if index == test_index:
-                test.append(d)
-            elif index == val_index:
-                val.append(d)
-            else:
-                train.append(d)
-
-        return MoleculeDataset(train), MoleculeDataset(val), MoleculeDataset(test)
-
     elif split_type == 'cv':
         if num_folds <= 1 or num_folds > len(data):
             raise ValueError(
@@ -304,60 +281,6 @@ def split_data(data: MoleculeDataset,
 
         return MoleculeDataset(train), MoleculeDataset(val), MoleculeDataset(test)
 
-
-
-    elif split_type == 'index_predetermined':
-        split_indices = args.crossval_index_sets[args.seed]
-
-        if len(split_indices) != 3:
-            raise ValueError(
-                'Split indices must have three splits: train, validation, and test')
-
-        data_split = []
-        for split in range(3):
-            data_split.append([data[i] for i in split_indices[split]])
-        train, val, test = tuple(data_split)
-        return MoleculeDataset(train), MoleculeDataset(val), MoleculeDataset(test)
-
-    elif split_type == 'predetermined':
-        if not val_fold_index and sizes[2] != 0:
-            raise ValueError('Test size must be zero since test set is created separately '
-                             'and we want to put all other data in train and validation')
-
-        assert folds_file is not None
-        assert test_fold_index is not None
-
-        try:
-            with open(folds_file, 'rb') as f:
-                all_fold_indices = pickle.load(f)
-        except UnicodeDecodeError:
-            with open(folds_file, 'rb') as f:
-                # in case we're loading indices from python2
-                all_fold_indices = pickle.load(f, encoding='latin1')
-
-        log_scaffold_stats(data, all_fold_indices, logger=logger)
-
-        folds = [[data[i] for i in fold_indices]
-                 for fold_indices in all_fold_indices]
-
-        test = folds[test_fold_index]
-        if val_fold_index is not None:
-            val = folds[val_fold_index]
-
-        train_val = []
-        for i in range(len(folds)):
-            if i != test_fold_index and (val_fold_index is None or i != val_fold_index):
-                train_val.extend(folds[i])
-
-        if val_fold_index is not None:
-            train = train_val
-        else:
-            random.shuffle(train_val)
-            train_size = int(sizes[0] * len(train_val))
-            train = train_val[:train_size]
-            val = train_val[train_size:]
-
-        return MoleculeDataset(train), MoleculeDataset(val), MoleculeDataset(test)
 
     elif split_type == 'scaffold_balanced':
         return scaffold_split(data, sizes=sizes, balanced=True, seed=seed, logger=logger)
