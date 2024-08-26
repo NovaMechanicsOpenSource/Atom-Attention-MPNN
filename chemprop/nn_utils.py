@@ -22,13 +22,16 @@ def compute_pnorm(model: nn.Module) -> float:
     """Computes the norm of the parameters of a model."""
     return math.sqrt(sum([p.norm().item() ** 2 for p in model.parameters()]))
 
+
 def compute_gnorm(model: nn.Module) -> float:
     """Computes the norm of the gradients of a model."""
     return math.sqrt(sum([p.grad.norm().item() ** 2 for p in model.parameters() if p.grad is not None]))
 
+
 def param_count(model: nn.Module) -> int:
     """Determines number of trainable parameters."""
     return sum(param.numel() for param in model.parameters() if param.requires_grad)
+
 
 def index_select_ND(source: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
     """Selects the message features from source corresponding to the atom or bond indices in :code:`index`."""
@@ -39,7 +42,18 @@ def index_select_ND(source: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
     target = target.view(final_size)
     return target
 
+
 def get_activation_function(activation: str) -> nn.Module:
+    """
+    Gets an activation function module given the name of the activation.
+    Supports:
+    * :code:`ReLU`
+    * :code:`LeakyReLU`
+    * :code:`PReLU`
+    * :code:`tanh`
+    * :code:`SELU`
+    * :code:`ELU`
+    """
     if activation == 'ReLU':
         return nn.ReLU()
     elif activation == 'LeakyReLU':
@@ -56,20 +70,37 @@ def get_activation_function(activation: str) -> nn.Module:
         raise ValueError(f'Activation "{activation}" not supported.')
 
 
+
 ##### This is for transfer learning
 def initialize_weights_tf(model: nn.Module) -> None:
+    #Freeze encoder
+    #for param in model.encoder.parameters():
+    #    param.requires_grad=False
+    #Initializes the weights of a model in place.
     for param in model.ffn.parameters():
         if param.dim() == 1:
+            print(' heeere param', param.shape)
             nn.init.constant_(param, 0)
         else:
+            print('heeere param normal', param.shape)
             nn.init.xavier_normal_(param)
 
+
+
 def initialize_weights(model: nn.Module) -> None:
+    ### Initializes the weights of a model in place.
+    ### :param model: An PyTorch model.
     for param in model.parameters():
         if param.dim() == 1:
+            print(' heeere param', param.shape)
             nn.init.constant_(param, 0)
         else:
+            print('heeere param normal', param.shape)
             nn.init.xavier_normal_(param)
+            
+
+
+
 
 class NoamLR(_LRScheduler):
     """
@@ -107,9 +138,11 @@ class NoamLR(_LRScheduler):
 
         self.current_step = 0
         self.lr = init_lr
-        self.warmup_steps = (self.warmup_epochs * self.steps_per_epoch).astype(int)
+        self.warmup_steps = (self.warmup_epochs *
+                             self.steps_per_epoch).astype(int)
         self.total_steps = self.total_epochs * self.steps_per_epoch
-        self.linear_increment = (self.max_lr - self.init_lr) / self.warmup_steps
+        self.linear_increment = (
+            self.max_lr - self.init_lr) / self.warmup_steps
 
         self.exponential_gamma = (self.final_lr / self.max_lr) ** (1 / (self.total_steps - self.warmup_steps))
 
@@ -128,9 +161,12 @@ class NoamLR(_LRScheduler):
 
         for i in range(self.num_lrs):
             if self.current_step <= self.warmup_steps[i]:
-                self.lr[i] = self.init_lr[i] + self.current_step * self.linear_increment[i]
+                self.lr[i] = self.init_lr[i] + \
+                    self.current_step * self.linear_increment[i]
             elif self.current_step <= self.total_steps[i]:
-                self.lr[i] = self.max_lr[i] * (self.exponential_gamma[i] ** (self.current_step - self.warmup_steps[i]))
+                self.lr[i] = self.max_lr[i] * \
+                    (self.exponential_gamma[i] **
+                     (self.current_step - self.warmup_steps[i]))
             else:
                 self.lr[i] = self.final_lr[i]
 

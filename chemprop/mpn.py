@@ -67,16 +67,19 @@ class MPNEncoder(nn.Module):
         if self.atom_messages:
             a2a = mol_graph.get_a2a().to(self.device)
 
+
         # Input
         if self.atom_messages:
             input = self.W_i(f_atoms)
         else:
             input = self.W_i(f_bonds)
 
+
         message = self.act_func(input)
 
         # Message passing
         for depth in range(self.depth - 1):
+            #print('DEPTH:', depth)
             if self.undirected:
                 message = (message + message[b2revb]) / 2
 
@@ -119,6 +122,7 @@ class MPNEncoder(nn.Module):
                     mol_vec = self.atom_residual(cur_hiddens, mol_vec)
                     if viz_dir:
                         visualize_atom_attention(viz_dir, mol_graph.smiles_batch[i], a_size, att_a_w)
+                        #visualize_atom_attention__(viz_dir, mol_graph.smiles_batch[i], a_size, att_a_w)
                 else:
                     mol_vec = cur_hiddens
 
@@ -138,15 +142,21 @@ class MPN(nn.Module):
     """An :class:`MPN` is a wrapper around :class:`MPNEncoder` which featurizes input as needed."""
 
     def __init__(self,
-                 args: TrainArgs, atom_fdim: int = None, bond_fdim: int = None):
+                 args: TrainArgs,
+                 atom_fdim: int = None,
+                 bond_fdim: int = None):
         super(MPN, self).__init__()
-        self.atom_fdim = atom_fdim or get_atom_fdim()
-        self.bond_fdim = bond_fdim or get_bond_fdim(atom_messages=args.atom_messages)
+        self.atom_fdim = atom_fdim or get_atom_fdim(overwrite_default_atom=args.overwrite_default_atom_features)
+        self.bond_fdim = bond_fdim or get_bond_fdim(overwrite_default_atom=args.overwrite_default_atom_features,
+                                                    overwrite_default_bond=args.overwrite_default_bond_features,
+                                                    atom_messages=args.atom_messages)
+
         self.features_only = args.features_only
         self.use_input_features = args.use_input_features
         self.device = args.device
+        self.overwrite_default_atom_features = args.overwrite_default_atom_features
+        self.overwrite_default_bond_features = args.overwrite_default_bond_features
 
-        #initialize_weights(self)
 
         if self.features_only:
             return
@@ -168,4 +178,5 @@ class MPN(nn.Module):
     def viz_attention(self,
                       batch: Union[List[str], BatchMolGraph],
                       viz_dir: str = None):
+
         encodings = [enc(ba, viz_dir=viz_dir) for enc, ba in zip(self.encoder, batch)]

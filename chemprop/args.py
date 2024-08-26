@@ -4,26 +4,53 @@ from tempfile import TemporaryDirectory
 import pickle
 from typing import List, Optional, Tuple
 from typing_extensions import Literal
+
 import torch
 from tap import Tap
 import chemprop.data_utils
 from .data import set_cache_mol
 from .features_generators import get_available_features_generators
 
-Metric = Literal['auc', 'prc-auc', 'confusion_matrix', 'recall', 'specificity', 'precision', 'accuracy', 'cross_entropy', 'binary_cross_entropy']
 
-def get_checkpoint_paths(checkpoint_dir: Optional[str] = None,
+Metric = Literal['auc', 'prc-auc', 'confusion_matrix','recall', 'specificity','precision','accuracy', 'cross_entropy', 'binary_cross_entropy']
+
+
+def get_checkpoint_paths(checkpoint_path: Optional[str] = None,
+                         checkpoint_paths: Optional[List[str]] = None,
+                         checkpoint_dir: Optional[str] = None,
                          ext: str = '.pt') -> Optional[List[str]]:
+    """
+    Gets a list of checkpoint paths either from a single checkpoint path or from a directory of checkpoints.
+
+    If :code:`checkpoint_path` is provided, only collects that one checkpoint.
+    If :code:`checkpoint_paths` is provided, collects all of the provided checkpoints.
+    If :code:`checkpoint_dir` is provided, walks the directory and collects all checkpoints.
+    A checkpoint is any file ending in the extension ext.
+    """
+    if sum(var is not None for var in [checkpoint_dir, checkpoint_path, checkpoint_paths]) > 1:
+        raise ValueError(
+            'Can only specify one of checkpoint_dir, checkpoint_path, and checkpoint_paths')
+
+    if checkpoint_path is not None:
+        return [checkpoint_path]
+
+    if checkpoint_paths is not None:
+        return checkpoint_paths
+
     if checkpoint_dir is not None:
         checkpoint_paths = []
+
         for root, _, files in os.walk(checkpoint_dir):
             for fname in files:
                 if fname.endswith(ext):
                     checkpoint_paths.append(os.path.join(root, fname))
+
         if len(checkpoint_paths) == 0:
             raise ValueError(f'Failed to find any checkpoints with extension "{ext}" in directory "{checkpoint_dir}"')
         return checkpoint_paths
+
     return None
+
 
 class CommonArgs(Tap):
     smiles_columns: List[str] = None
@@ -32,6 +59,10 @@ class CommonArgs(Tap):
     """Number of molecules in each input to the model."""
     checkpoint_dir: str = None
     """Directory from which to load model checkpoints (walks directory and ensembles all models that are found)."""
+    checkpoint_path: str = None
+    """Path to model checkpoint (:code:`.pt` file)."""
+    checkpoint_paths: List[str] = None
+    """List of paths to model checkpoints (:code:`.pt` files)."""
     pretrained_checkpoint: str = None
     """Path to model pretrained"""
     no_cuda: bool = False
@@ -50,8 +81,18 @@ class CommonArgs(Tap):
     """Number of workers for the parallel data loading (0 means sequential)."""
     batch_size: int = 100
     """Batch size."""
+    atom_descriptors: Literal['feature', 'descriptor'] = None
+    """
+    Custom extra atom descriptors.
+    :code:`feature`: used as atom features to featurize a given molecule.
+    :code:`descriptor`: used as descriptor and concatenated to the machine learned atomic representation.
+    """
+    atom_descriptors_path: str = None
+    """Path to the extra atom descriptors."""
     no_cache_mol: bool = False
-    """Whether to not cache the RDKit molecule for each SMILES string to reduce memory usage (cached by default)."""
+    """
+    Whether to not cache the RDKit molecule for each SMILES string to reduce memory usage (cached by default).
+    """
 
     def __init__(self, *args, **kwargs):
         super(CommonArgs, self).__init__(*args, **kwargs)
@@ -61,6 +102,7 @@ class CommonArgs(Tap):
 
     @property
     def device(self) -> torch.device:
+        """The :code:`torch.device` on which to load and process data and models."""
         if not self.cuda:
             return torch.device('cpu')
         return torch.device('cuda', self.gpu)
@@ -72,6 +114,7 @@ class CommonArgs(Tap):
 
     @property
     def cuda(self) -> bool:
+        """Whether to use CUDA (i.e., GPUs) or not."""
         return not self.no_cuda and torch.cuda.is_available()
 
     @cuda.setter
@@ -110,15 +153,34 @@ class CommonArgs(Tap):
         self._bond_features_size = bond_features_size
 
     def configure(self) -> None:
-        self.add_argument('--gpu', choices=list(range(torch.cuda.device_count())))
-        self.add_argument('--features_generator', choices=get_available_features_generators()) 
+        self.add_argument(
+            '--gpu', choices=list(range(torch.cuda.device_count())))
+        self.add_argument('--features_generator',
+                          choices=get_available_features_generators()) 
 
     def process_args(self) -> None:
-        self.checkpoint_paths = get_checkpoint_paths(checkpoint_dir=self.checkpoint_dir)
+        self.checkpoint_paths = get_checkpoint_paths(
+            checkpoint_path=self.checkpoint_path,
+            checkpoint_paths=self.checkpoint_paths,
+            checkpoint_dir=self.checkpoint_dir,)
+
         # Validate features
         if self.features_generator is not None and 'rdkit_2d_normalized' in self.features_generator and self.features_scaling:
-            raise ValueError('When using rdkit_2d_normalized features, --no_features_scaling must be specified.')
+            raise ValueError(
+                'When using rdkit_2d_normalized features, --no_features_scaling must be specified.')
+
+        # Validate atom descriptors
+        if (self.atom_descriptors is None) != (self.atom_descriptors_path is None):
+            raise ValueError('If atom_descriptors is specified, then an atom_descriptors_path must be provided '
+                             'and vice versa.')
+
+        if self.atom_descriptors is not None and self.number_of_molecules > 1:
+            raise NotImplementedError('Atom descriptors are currently only supported with one molecule '
+                                      'per input (i.e., number_of_molecules = 1).')
+
+
         set_cache_mol(not self.no_cache_mol)
+
 
 class TrainArgs(CommonArgs):
     data_path: str
@@ -165,6 +227,7 @@ class TrainArgs(CommonArgs):
     """The number of batches between each logging of the training loss."""
     save_preds: bool = False
     """Whether to save test split predictions during training."""
+
     bias: bool = False
     """Whether to add bias to linear layers."""
     hidden_size: int = 500
@@ -185,6 +248,13 @@ class TrainArgs(CommonArgs):
     """Number of layers in FFN after MPN encoding."""
     features_only: bool = False
     """Use only the additional features in an FFN, no graph network."""
+
+    separate_val_atom_descriptors_path: str = None
+    """Path to file with extra atom descriptors for separate val set."""
+    separate_test_atom_descriptors_path: str = None
+    """Path to file with extra atom descriptors for separate test set."""
+    ensemble_size: int = 1
+    """Number of models in ensemble."""
     aggregation: Literal['mean', 'sum', 'norm'] = 'mean'
     """Aggregation scheme for atomic vectors into molecular vectors"""
     aggregation_norm: int = 100
@@ -216,8 +286,16 @@ class TrainArgs(CommonArgs):
     """Maximum magnitude of gradient during training."""
     class_balance: bool = False
     """Trains with an equal number of positives and negatives in each batch."""
+
+    overwrite_default_atom_features: bool = False
+    """
+    Overwrites the default atom descriptors with the new ones instead of concatenating them.
+    Can only be used if atom_descriptors are used as a feature.
+    """
     no_atom_descriptor_scaling: bool = False
     """Turn off atom feature scaling."""
+    overwrite_default_bond_features: bool = False
+    """Overwrites the default atom descriptors with the new ones instead of concatenating them"""
     no_bond_features_scaling: bool = False
     """Turn off atom feature scaling."""
 
@@ -238,7 +316,7 @@ class TrainArgs(CommonArgs):
     @property
     def minimize_score(self) -> bool:
         """Whether the model should try to minimize the score metric or maximize it."""
-        return self.metric in {'cross_entropy', 'binary_cross_entropy'}
+        return self.metric in {'rmse', 'mae', 'mse', 'cross_entropy', 'binary_cross_entropy'}
 
     @property
     def use_input_features(self) -> bool:
@@ -309,16 +387,19 @@ class TrainArgs(CommonArgs):
             temp_dir = TemporaryDirectory()
             self.save_dir = temp_dir.name
 
+        if self.checkpoint_paths is not None and len(self.checkpoint_paths) > 0:
+            self.ensemble_size = len(self.checkpoint_paths)
+
         if self.metric is None:
             self.metric = 'auc'
 
         if self.metric in self.extra_metrics:
-            raise ValueError(f'Metric {self.metric} is both the metric and is in extra_metrics. Please only include it once.')
+            raise ValueError(f'Metric {self.metric} is both the metric and is in extra_metrics. '
+                             f'Please only include it once.')
 
         for metric in self.metrics:
             if not ((metric in ['auc', 'prc-auc','confusion_matrix','recall', 'specificity','precision', 'accuracy', 'binary_cross_entropy'])):
                 raise ValueError(f'Metric "{metric}" invalid.')
-
 
         if self.features_only and not (self.features_generator):
             raise ValueError('When using features_only, a features_generator must be provided.')
@@ -348,6 +429,23 @@ class TrainArgs(CommonArgs):
         if self.test:
             self.epochs = 0
 
+        if self.separate_val_path is not None and self.atom_descriptors is not None \
+                and self.separate_val_atom_descriptors_path is None:
+            raise ValueError('Atom descriptors are required for the separate validation set.')
+
+        if self.separate_test_path is not None and self.atom_descriptors is not None \
+                and self.separate_test_atom_descriptors_path is None:
+            raise ValueError('Atom descriptors are required for the separate test set.')
+
+
+        if self.overwrite_default_atom_features and self.atom_descriptors != 'feature':
+            raise NotImplementedError('Overwriting of the default atom descriptors can only be used if the'
+                                      'provided atom descriptors are features.')
+
+        if not self.atom_descriptor_scaling and self.atom_descriptors is None:
+            raise ValueError('Atom descriptor scaling is only possible if additional atom features are provided.')
+
+
 class PredictArgs(CommonArgs):
     test_path: str
     """Path to CSV file containing testing data for which predictions will be made."""
@@ -355,22 +453,32 @@ class PredictArgs(CommonArgs):
     """Path to CSV file where predictions will be saved."""
     viz_dir: str = None
     """Path to CSV file where similarity maps will be saved."""
+    @property
+    def ensemble_size(self) -> int:
+        """The number of models in the ensemble."""
+        return len(self.checkpoint_paths)
 
     def process_args(self) -> None:
         super(PredictArgs, self).process_args()
+
         self.smiles_columns = chemprop.data_utils.preprocess_smiles_columns(
             path=self.test_path,
             smiles_columns=self.smiles_columns,
-            number_of_molecules=self.number_of_molecules)
+            number_of_molecules=self.number_of_molecules,
+        )
 
         if self.checkpoint_paths is None or len(self.checkpoint_paths) == 0:
-            raise ValueError('Found no checkpoints. Must specify --checkpoint_dir <dir> containing at least one checkpoint.')
+            raise ValueError('Found no checkpoints. Must specify --checkpoint_path <path> or '
+                             '--checkpoint_dir <dir> containing at least one checkpoint.')
+
 
 class InterpretArgs(CommonArgs):
     data_path: str
     """Path to data CSV file."""
     batch_size: int = 500
     """Batch size."""
+    property_id: int = 1
+    """Index of the property of interest in the trained model."""
     rollout: int = 20
     """Number of rollout steps."""
     c_puct: float = 10.0
@@ -384,13 +492,16 @@ class InterpretArgs(CommonArgs):
 
     def process_args(self) -> None:
         super(InterpretArgs, self).process_args()
+
         self.smiles_columns = chemprop.data_utils.preprocess_smiles_columns(
             path=self.data_path,
             smiles_columns=self.smiles_columns,
             number_of_molecules=self.number_of_molecules,)
 
         if self.checkpoint_paths is None or len(self.checkpoint_paths) == 0:
-            raise ValueError('Found no checkpoints. Must specify --checkpoint_dir <dir> containing at least one checkpoint.')
+            raise ValueError('Found no checkpoints. Must specify --checkpoint_path <path> or '
+                             '--checkpoint_dir <dir> containing at least one checkpoint.')
+
 
 class HyperoptArgs(TrainArgs):
     num_iters: int = 20

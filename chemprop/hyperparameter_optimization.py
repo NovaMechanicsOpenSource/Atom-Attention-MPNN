@@ -18,12 +18,14 @@ from .utils import create_logger, makedirs, timeit
 
 
 SPACE = {
+    #'hidden_size': hp.quniform('hidden_size', low=300, high=2000, q=100),
     'depth': hp.quniform('depth', low=1, high=6, q=1),
     'dropout': hp.quniform('dropout', low=0.0, high=0.4, q=0.1),
     'batch_size': hp.choice('batch_size', [256, 512]), 
     'ffn_num_layers': hp.choice('ffn_num_layers', [2,3])
+    #'num_heads': hp.quniform('num_heads', low=2, high=6, q=2)
     }
-
+#INT_KEYS = ['hidden_size', 'depth']
 INT_KEYS = ['depth', 'dropout', 'batch_size']
 @timeit(logger_name=HYPEROPT_LOGGER_NAME)
 def hyperopt(args: HyperoptArgs) -> None:
@@ -32,6 +34,7 @@ def hyperopt(args: HyperoptArgs) -> None:
 
     def objective(hyperparams: Dict[str, Union[int, float]]) -> float:
         for key in INT_KEYS:
+            print('INT_KEYS', INT_KEYS)
             hyperparams[key] = int(hyperparams[key])
         hyper_args = deepcopy(args)
         if args.save_dir is not None:
@@ -46,6 +49,7 @@ def hyperopt(args: HyperoptArgs) -> None:
         logger.info(hyperparams)
 
         mean_score_val, std_score_val, mean_score_ts, std_score_ts = cross_validate(args=hyper_args, train_func=run_training)
+        print('heeeeeeeeeere 180724')
 
         temp_model = MoleculeModel(hyper_args)
 
@@ -63,6 +67,7 @@ def hyperopt(args: HyperoptArgs) -> None:
         if np.isnan(mean_score_ts):
             mean_score_ts = 0
 
+
         return (1 if hyper_args.minimize_score else -1) * mean_score_ts
 
     fmin(objective, SPACE, algo=tpe.suggest, max_evals=args.num_iters, rstate=np.random.default_rng(args.seed))
@@ -73,9 +78,11 @@ def hyperopt(args: HyperoptArgs) -> None:
     logger.info(best_result['hyperparams'])
     logger.info(f'num params: {best_result["num_params"]:,}')
     logger.info(f'{best_result["mean_score"]} +/- {best_result["std_score"]} {args.metric}')
+
     makedirs(args.config_save_path, isfile=True)
     with open(args.config_save_path, 'w') as f:
         json.dump(best_result['hyperparams'], f, indent=4, sort_keys=True)
+
 
 def chemprop_hyperopt() -> None:
     hyperopt(args=HyperoptArgs().parse_args())

@@ -3,6 +3,7 @@ import logging
 from random import Random
 from typing import Dict, List, Set, Tuple, Union
 import warnings
+
 from rdkit import Chem
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from tqdm import tqdm
@@ -35,16 +36,20 @@ def scaffold_split(data: MoleculeDataset,
                    sizes: Tuple[float, float, float] = (0.8, 0.1, 0.1),
                    balanced: bool = False,
                    seed: int = 0,
-                   logger: logging.Logger = None) -> Tuple[MoleculeDataset, MoleculeDataset, MoleculeDataset]:
+                   logger: logging.Logger = None) -> Tuple[MoleculeDataset,
+                                                           MoleculeDataset,
+                                                           MoleculeDataset]:
     """Splits a :class:`~chemprop.data.MoleculeDataset` by scaffold so that no molecules sharing a scaffold are in different splits."""
     assert sum(sizes) == 1
 
     if data.number_of_molecules > 1:
         raise ValueError('Cannot perform a scaffold split with more than one molecule per datapoint.')
 
+    # Split
     train_size, val_size, test_size = sizes[0] * len(data), sizes[1] * len(data), sizes[2] * len(data)
     train, val, test = [], [], []
     train_scaffold_count, val_scaffold_count, test_scaffold_count = 0, 0, 0
+
     scaffold_to_indices = scaffold_to_smiles(data.mols(flatten=True), use_indices=True)
     random = Random(seed)
 

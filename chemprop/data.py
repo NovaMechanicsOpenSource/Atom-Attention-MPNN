@@ -37,13 +37,13 @@ class MoleculeDatapoint:
         if self.features_generator is not None:
             self.features = []
 
-            #for fg in self.features_generator:
-            features_generator = get_features_generator(features_generator)
-            for m in self.mol:
-                if m is not None and m.GetNumHeavyAtoms() > 0:
-                    self.features.extend(features_generator(m))
-                elif m is not None and m.GetNumHeavyAtoms() == 0:
-                    self.features.extend(np.zeros(len(features_generator(Chem.MolFromSmiles('C')))))
+            for fg in self.features_generator:
+                features_generator = get_features_generator(fg)
+                for m in self.mol:
+                    if m is not None and m.GetNumHeavyAtoms() > 0:
+                        self.features.extend(features_generator(m))
+                    elif m is not None and m.GetNumHeavyAtoms() == 0:
+                        self.features.extend(np.zeros(len(features_generator(Chem.MolFromSmiles('C')))))
 
             self.features = np.array(self.features)
 
@@ -115,8 +115,10 @@ class MoleculeDataset(Dataset):
                 mol_graphs_list = []
                 for s, m in zip(d.smiles, d.mol):
                     if randomized:
+                        #print('Randomizeddddd')
                         mol_graph = MolGraph(m, mask_atoms=True)
                     else:
+                        #print('Not randomized')
                         mol_graph = MolGraph(m)
                     mol_graphs_list.append(mol_graph)
                 mol_graphs.append(mol_graphs_list)
@@ -161,6 +163,13 @@ class MoleculeDataset(Dataset):
             d.set_features(self._scaler.transform(d.raw_features.reshape(1, -1))[0])
 
         return self._scaler
+
+    def normalize_targets(self) -> StandardScaler:
+        targets = [d.raw_targets for d in self._data]
+        scaler = StandardScaler().fit(targets)
+        scaled_targets = scaler.transform(targets).tolist()
+        self.set_targets(scaled_targets)
+        return scaler
 
     def set_targets(self, targets: List[List[Optional[float]]]) -> None:
         assert len(self._data) == len(targets)

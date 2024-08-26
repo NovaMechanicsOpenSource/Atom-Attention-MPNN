@@ -84,7 +84,7 @@ def run_training(args: TrainArgs,
             train_data=train_data,
             val_data=val_data,
             test_data=test_data,
-            smiles_columns=args.smiles_columns)
+            smiles_columns=args.smiles_columns,)
 
     if args.features_scaling:
         features_scaler = train_data.normalize_features(replace_nan_token=0)
@@ -98,6 +98,7 @@ def run_training(args: TrainArgs,
     debug(f'Total size = {len(data):,} | '
           f'train size = {len(train_data):,} | val size = {len(val_data):,} | test size = {len(test_data):,}')
 
+    scaler = None
 
     loss_func = get_loss_func(args)
 
@@ -129,121 +130,135 @@ def run_training(args: TrainArgs,
     if args.class_balance:
         debug(f'With class_balance, effective train size = {train_data_loader.iter_size:,}')
 
-    save_dir = os.path.join(args.save_dir)
-    makedirs(save_dir)
-    try:
-        writer = SummaryWriter(log_dir=save_dir)
-    except:
-        writer = SummaryWriter(logdir=save_dir)
+    for model_idx in range(args.ensemble_size):
+        save_dir = os.path.join(args.save_dir, f'model_{model_idx}')
+        makedirs(save_dir)
+        try:
+            writer = SummaryWriter(log_dir=save_dir)
+        except:
+            writer = SummaryWriter(logdir=save_dir)
 
-    if args.checkpoint_paths is not None:
-        model = load_checkpoint(args.checkpoint_paths[0], logger=logger)
-    elif args.pretrained_checkpoint is not None:
-        model = MoleculeModel(args)
-        debug('here import model')
-        state_dict = torch.load(args.pretrained_checkpoint, map_location=args.device)
-        #model.load_my_state_dict(state_dict)
-        model.encoder = load_checkpoint_MPN(args.pretrained_checkpoint, logger=logger)
-        print("Loaded pre-trained model with success.")
-        for name, param in model.named_parameters():
-            print("HEEEEERE", name, param.requires_grad)
+        if args.checkpoint_paths is not None:
+            debug(f'Loading model {model_idx} from {args.checkpoint_paths[model_idx]}')
+            model = load_checkpoint(args.checkpoint_paths[model_idx], logger=logger)
+        elif args.pretrained_checkpoint is not None:
+            model = MoleculeModel(args)
+            debug('here import model')
+            state_dict = torch.load(args.pretrained_checkpoint, map_location=args.device)
+            #model.load_my_state_dict(state_dict)
+            model.encoder = load_checkpoint_MPN(args.pretrained_checkpoint, logger=logger)
+            print("Loaded pre-trained model with success.")
+            #for param in model.parameters():
+            #    param.requires_grad = False
+            # Then, enable requires_grad for FFN parameters
+            #for param in model.ffn.parameters():
+            #    param.requires_grad = True
 
-    else:
-        model = MoleculeModel(args)
-        debug('here import model, intitialize all weights????')
+            # Optionally, you may print to verify which parameters have requires_grad=True
+            for name, param in model.named_parameters():
+                print("HEEEEERE", name, param.requires_grad)
 
-    debug(model)
-    debug(f'Number of parameters = {param_count(model):,}')
-    if args.cuda:
-        debug('Moving model to cuda')
-    model = model.to(args.device)
+        else:
+            debug(f'Building model {model_idx}')
+            model = MoleculeModel(args)
+            debug('here import model, intitialize all weights????')
 
-    save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, features_scaler, args)
+        debug(model)
+        debug(f'Number of parameters = {param_count(model):,}')
+        if args.cuda:
+            debug('Moving model to cuda')
+        model = model.to(args.device)
 
-    optimizer = build_optimizer(model, args)
-    scheduler = build_lr_scheduler(optimizer, args)
+        save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), model, scaler, features_scaler, args)
 
-    best_score = float('inf') if args.minimize_score else -float('inf')
-    best_epoch, n_iter = 0, 0
+        optimizer = build_optimizer(model, args)
+        scheduler = build_lr_scheduler(optimizer, args)
+
+        best_score = float('inf') if args.minimize_score else -float('inf')
+        best_epoch, n_iter = 0, 0
+
+        for epoch in trange(args.epochs):
+            debug(f'Epoch {epoch}')
+
+            n_iter = train(
+                model=model,
+                data_loader=train_data_loader,
+                loss_func=loss_func,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                args=args,
+                n_iter=n_iter,
+                logger=logger,
+                writer=writer)
+            if isinstance(scheduler, ExponentialLR):
+                scheduler.step()
+            val_scores, _, _ = evaluate(
+                model=model,
+                data_loader=val_data_loader,
+                num_tasks=args.num_tasks,
+                metrics=args.metrics,
+                scaler=scaler,
+                logger=logger)
+
+            for metric, scores in val_scores.items(): 
+                avg_val_score = np.nanmean(scores)
+                debug(f'Validation {metric} = {avg_val_score:.6f}')
+                writer.add_scalar(f'validation_{metric}', avg_val_score, n_iter)
 
 
-    for epoch in trange(args.epochs):
-        debug(f'Epoch {epoch}')
+            avg_val_score = np.nanmean(val_scores[args.metric])
 
-        n_iter = train(
+
+            if args.minimize_score and avg_val_score < best_score or \
+                    not args.minimize_score and avg_val_score > best_score:
+                best_score, best_epoch = avg_val_score, epoch
+                save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME),
+                                model, scaler, features_scaler, args)
+
+        info(f'Model {model_idx} best validation {args.metric} = {best_score:.6f} on epoch {best_epoch}')
+        args.features_size = data.features_size()
+
+        model = load_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), device=args.device, logger=logger)
+
+        train_preds = predict(
             model=model,
             data_loader=train_data_loader,
-            loss_func=loss_func,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            args=args,
-            n_iter=n_iter,
-            logger=logger,
-            writer=writer)
-        if isinstance(scheduler, ExponentialLR):
-            scheduler.step()
-        val_scores, _, _ = evaluate(
+            scaler=scaler)
+
+        if len(train_preds) != 0:
+            sum_train_preds += np.array(train_preds)
+
+        val_preds = predict(
             model=model,
             data_loader=val_data_loader,
+            scaler=scaler)
+
+        if len(val_preds) != 0:
+            sum_val_preds += np.array(val_preds)
+
+        test_preds = predict(
+            model=model,
+            data_loader=test_data_loader,
+            scaler=scaler)
+
+        test_scores, _, _ = evaluate_predictions(
+            preds=test_preds,
+            targets=test_targets,
             num_tasks=args.num_tasks,
             metrics=args.metrics,
             logger=logger)
 
-        for metric, scores in val_scores.items(): 
-            avg_val_score = np.nanmean(scores)
-            debug(f'Validation {metric} = {avg_val_score:.6f}')
-            writer.add_scalar(f'validation_{metric}', avg_val_score, n_iter)
+        if len(test_preds) != 0:
+            sum_test_preds += np.array(test_preds)
 
+        for metric, scores in test_scores.items():
+            avg_test_score = np.nanmean(scores)
+            info(f'Model {model_idx} test {metric} = {avg_test_score:.6f}')
+            writer.add_scalar(f'test_{metric}', avg_test_score, 0)
+        writer.close()
 
-        avg_val_score = np.nanmean(val_scores[args.metric])
-
-        if args.minimize_score and avg_val_score < best_score or \
-                not args.minimize_score and avg_val_score > best_score:
-            best_score, best_epoch = avg_val_score, epoch
-            save_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME),
-                            model, features_scaler, args)
-
-    info(f'Model best validation {args.metric} = {best_score:.6f} on epoch {best_epoch}')
-    args.features_size = data.features_size()
-
-    model = load_checkpoint(os.path.join(save_dir, MODEL_FILE_NAME), device=args.device, logger=logger)
-
-    train_preds = predict(
-        model=model,
-        data_loader=train_data_loader)
-
-    if len(train_preds) != 0:
-        sum_train_preds += np.array(train_preds)
-
-    val_preds = predict(
-        model=model,
-        data_loader=val_data_loader)
-
-    if len(val_preds) != 0:
-        sum_val_preds += np.array(val_preds)
-
-    test_preds = predict(
-        model=model,
-        data_loader=test_data_loader)
-
-    test_scores, _, _ = evaluate_predictions(
-        preds=test_preds,
-        targets=test_targets,
-        num_tasks=args.num_tasks,
-        metrics=args.metrics,
-        logger=logger)
-
-    if len(test_preds) != 0:
-        sum_test_preds += np.array(test_preds)
-
-    for metric, scores in test_scores.items():
-        avg_test_score = np.nanmean(scores)
-        info(f'Model test {metric} = {avg_test_score:.6f}')
-        writer.add_scalar(f'test_{metric}', avg_test_score, 0)
-    writer.close()
-
-    avg_val_preds = sum_val_preds.tolist()
-    scores_val, df_val_preds, df_val_tar = evaluate_predictions(
+    avg_val_preds = (sum_val_preds / args.ensemble_size).tolist()
+    ensemble_scores_val, df_val_preds, df_val_tar = evaluate_predictions(
         preds=avg_val_preds,
         targets=val_targets,
         num_tasks=args.num_tasks,
@@ -253,12 +268,12 @@ def run_training(args: TrainArgs,
     if 'auc' in args.metrics:
         plot_roc_curve(val_targets, avg_val_preds, os.path.join(args.save_dir, 'val_roc_curve.png'))
 
-    for metric, scores in scores_val.items():
-        avg_val_score = np.nanmean(scores)
-        info(f'Val {metric} = {avg_val_score:.6f}')
+    for metric, scores in ensemble_scores_val.items():
+        avg_ensemble_val_score = np.nanmean(scores)
+        info(f'Ensemble val {metric} = {avg_ensemble_val_score:.6f}')
 
-    avg_test_preds = sum_test_preds.tolist()
-    scores_ts, df_ts_preds, df_ts_tar = evaluate_predictions(
+    avg_test_preds = (sum_test_preds / args.ensemble_size).tolist()
+    ensemble_scores_ts, df_ts_preds, df_ts_tar = evaluate_predictions(
         preds=avg_test_preds,
         targets=test_targets,
         num_tasks=args.num_tasks,
@@ -269,9 +284,9 @@ def run_training(args: TrainArgs,
     if 'auc' in args.metrics:
         plot_roc_curve(test_targets, avg_test_preds, os.path.join(args.save_dir, 'test_roc_curve.png'))
 
-    for metric, scores in scores_ts.items():
-        avg_test_score = np.nanmean(scores)
-        info(f'Test {metric} = {avg_test_score:.6f}')
+    for metric, scores in ensemble_scores_ts.items():
+        avg_ensemble_test_score = np.nanmean(scores)
+        info(f'Ensemble test {metric} = {avg_ensemble_test_score:.6f}')
 
     if args.save_preds:
         test_preds_dataframe = pd.DataFrame(data={'smiles': test_data.smiles()})
@@ -281,4 +296,6 @@ def run_training(args: TrainArgs,
 
         test_preds_dataframe.to_csv(os.path.join(args.save_dir, 'test_preds.csv'), index=False)
 
-    return scores_val, scores_ts
+    return ensemble_scores_val, ensemble_scores_ts
+
+

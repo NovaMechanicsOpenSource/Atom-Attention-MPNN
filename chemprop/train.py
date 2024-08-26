@@ -61,6 +61,7 @@ def train(model: MoleculeModel,
             loss_sum = iter_count = 0
             lrs_str = ', '.join(f'lr_{i} = {lr:.4e}' for i, lr in enumerate(lrs))
             debug(f'Loss = {loss_avg:.4e}, Par_Norm = {pnorm:.4f}, Grad_Norm = {gnorm:.4f}, {lrs_str}')
+
             if writer is not None:
                 writer.add_scalar('train_loss', loss_avg, n_iter)
                 writer.add_scalar('param_norm', pnorm, n_iter)
@@ -69,3 +70,4 @@ def train(model: MoleculeModel,
                     writer.add_scalar(f'learning_rate_{i}', lr, n_iter)
 
     return n_iter
+

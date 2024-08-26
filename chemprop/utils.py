@@ -12,7 +12,8 @@ from typing import Any, Callable, List, Tuple, Union
 import codecs
 import numpy as np
 
-from sklearn.metrics import auc, precision_recall_curve, roc_auc_score, accuracy_score, log_loss , precision_score, recall_score, confusion_matrix
+from sklearn.metrics import auc, mean_absolute_error, mean_squared_error, precision_recall_curve, r2_score,\
+    roc_auc_score, accuracy_score, log_loss , precision_score, recall_score, confusion_matrix
 import torch
 import torch.nn as nn
 from torch.optim import Adam, Optimizer
@@ -38,11 +39,13 @@ def makedirs(path: str, isfile: bool = False) -> None:
 
 def save_checkpoint(path: str,
                     model: MoleculeModel,
+                    scaler: StandardScaler = None,
                     features_scaler: StandardScaler = None,
                     args: TrainArgs = None) -> None:
     """
     Saves a model checkpoint.
     :param model: A :class:`~chemprop.models.model.MoleculeModel`.
+    :param scaler: A :class:`~chemprop.data.scaler.StandardScaler` fitted on the data.
     :param features_scaler: A :class:`~chemprop.data.scaler.StandardScaler` fitted on the features.
     :param atom_descriptor_scaler: A :class:`~chemprop.data.scaler.StandardScaler` fitted on the atom descriptors.
     :param bond_feature_scaler: A :class:`~chemprop.data.scaler.StandardScaler` fitted on the bond_fetaures.
@@ -55,6 +58,10 @@ def save_checkpoint(path: str,
     state = {
         'args': args,
         'state_dict': model.state_dict(),
+        'data_scaler': {
+            'means': scaler.means,
+            'stds': scaler.stds
+        } if scaler is not None else None,
         'features_scaler': {
             'means': features_scaler.means,
             'stds': features_scaler.stds
@@ -147,6 +154,9 @@ def load_checkpoint_MPN(path: str,
 def load_scalers(path: str) -> Tuple[StandardScaler, StandardScaler, StandardScaler, StandardScaler]:
     """Loads the scalers a model was trained with."""
     state = torch.load(path, map_location=lambda storage, loc: storage)
+
+    scaler = StandardScaler(state['data_scaler']['means'],
+                            state['data_scaler']['stds']) if state['data_scaler'] is not None else None
     features_scaler = StandardScaler(state['features_scaler']['means'],
                                      state['features_scaler']['stds'],
                                      replace_nan_token=0) if state['features_scaler'] is not None else None
@@ -165,7 +175,7 @@ def load_scalers(path: str) -> Tuple[StandardScaler, StandardScaler, StandardSca
     else:
         bond_feature_scaler = None
 
-    return features_scaler, atom_descriptor_scaler, bond_feature_scaler
+    return scaler, features_scaler, atom_descriptor_scaler, bond_feature_scaler
 
 
 def load_args(path: str) -> TrainArgs:
@@ -179,9 +189,11 @@ def load_task_names(path: str) -> List[str]:
     return load_args(path).task_names
 
 def get_loss_func(args: TrainArgs) -> nn.Module:
+    """Gets the loss function corresponding to a given dataset type."""
     return nn.BCEWithLogitsLoss(reduction='none')
 
 def get_loss_func_pretrain(args: TrainArgs) -> nn.Module:
+    """Gets the loss function corresponding to a given dataset type."""
     return nn.L1Loss(reduction='sum')
 
 def prc_auc(targets: List[int], preds: List[float]) -> float:
@@ -211,11 +223,36 @@ def confusion_matrix_(targets: List[int], preds: List[float]) -> List[List[int]]
     bin_preds = [1 if p > 0.5 else 0 for p in preds]
     return confusion_matrix(targets, bin_preds)
 
+def rmse(targets: List[float], preds: List[float]) -> float:
+    """Computes the root mean squared error."""
+    return math.sqrt(mean_squared_error(targets, preds))
+
+def mse(targets: List[float], preds: List[float]) -> float:
+    """Computes the mean squared error."""
+    return mean_squared_error(targets, preds)
+
 def accuracy(targets: List[int], preds: Union[List[float], List[List[float]]], threshold: float = 0.5) -> float:
     hard_preds = [1 if p > threshold else 0 for p in preds]
     return accuracy_score(targets, hard_preds)
 
 def get_metric_func(metric: str) -> Callable[[Union[List[int], List[float]], List[float]], float]:
+    r"""
+    Gets the metric function corresponding to a given metric name.
+
+    Supports:
+
+    * :code:`auc`: Area under the receiver operating characteristic curve
+    * :code:`prc-auc`: Area under the precision recall curve
+    * :code:`recall`: Recall
+    * :code:`precision`: Precision
+    * :code:`rmse`: Root mean squared error
+    * :code:`mse`: Mean squared error
+    * :code:`mae`: Mean absolute error
+    * :code:`r2`: Coefficient of determination R\ :superscript:`2`
+    * :code:`accuracy`: Accuracy (using a threshold to binarize predictions)
+    * :code:`cross_entropy`: Cross entropy
+    * :code:`binary_cross_entropy`: Binary cross entropy
+    """
     if metric == 'auc':
         return roc_auc_score
     if metric == 'prc-auc':
@@ -226,6 +263,14 @@ def get_metric_func(metric: str) -> Callable[[Union[List[int], List[float]], Lis
         return specif_score
     if metric == 'precision':
         return prec_score
+    if metric == 'rmse':
+        return rmse
+    if metric == 'mse':
+        return mse
+    if metric == 'mae':
+        return mean_absolute_error
+    if metric == 'r2':
+        return r2_score
     if metric == 'accuracy':
         return accuracy
     if metric == 'cross_entropy':
@@ -255,8 +300,10 @@ def build_lr_scheduler(optimizer: Optimizer, args: TrainArgs, total_epochs: List
 def create_logger(name: str, save_dir: str = None, quiet: bool = False) -> logging.Logger:
     """
     Creates a logger with a stream handler and two file handlers.
+
     If a logger with that name already exists, simply returns that logger.
     Otherwise, creates a new logger with a stream handler and two file handlers.
+
     The stream handler prints to the screen depending on the value of :code:`quiet`.
     One file handler (:code:`verbose.log`) saves all logs, the other (:code:`quiet.log`) only saves important info.
     """
@@ -355,6 +402,9 @@ def save_smiles_splits(data_path: str,
         task_names = get_task_names(
             path=data_path, smiles_columns=smiles_columns)
 
+    features_header = []
+
+
     all_split_indices = []
     for dataset, name in [(train_data, 'train'), (val_data, 'val'), (test_data, 'test')]:
         if dataset is None:
@@ -401,6 +451,7 @@ def update_prediction_args(predict_args: PredictArgs,
 
     """
     for key, value in vars(train_args).items():
+        # for key, value in train_args.items():
         if not hasattr(predict_args, key):
             setattr(predict_args, key, value)
 
@@ -412,6 +463,7 @@ def update_prediction_args(predict_args: PredictArgs,
     print('((train_args.features_generator is None) != (predict_args.features_generator is None))', ((train_args.features_generator is None) != (predict_args.features_generator is None)))
     if validate_feature_sources:
         # If features were used during training, they must be used when predicting
-        if ((train_args.features_generator is None) != (predict_args.features_generator is None)):
+        if (((train_args.features_generator is None) != (predict_args.features_generator is None))):
             raise ValueError('Features were used during training so they must be specified again during prediction '
-                             'using the same type of features as before (with either --features_generator and using --no_features_scaling if applicable).')
+                             'using the same type of features as before (with either --features_generator'
+                             'using --no_features_scaling if applicable).')

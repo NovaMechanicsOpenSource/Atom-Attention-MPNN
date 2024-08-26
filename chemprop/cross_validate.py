@@ -14,6 +14,7 @@ from .constants import VAL_SCORES_FILE_NAME, TEST_SCORES_FILE_NAME, TRAIN_LOGGER
 from .data_utils import get_data, get_task_names
 from .data import MoleculeDataset
 from .utils import create_logger, makedirs, timeit
+from .featurization import set_extra_atom_fdim, set_extra_bond_fdim
 
 @timeit(logger_name=TRAIN_LOGGER_NAME)
 def cross_validate(args: TrainArgs,
@@ -25,6 +26,7 @@ def cross_validate(args: TrainArgs,
     For each of k splits (folds) of the data, trains and tests a model on that split
     and aggregates the performance across folds.
     """
+    # logger: quite and verbose file
     logger = create_logger(name=TRAIN_LOGGER_NAME, save_dir=args.save_dir, quiet=args.quiet)
     if logger is not None:
         debug, info = logger.debug, logger.info
@@ -45,8 +47,14 @@ def cross_validate(args: TrainArgs,
     data = get_data(
         path=args.data_path, args=args,
         smiles_columns=args.smiles_columns, logger=logger, skip_none_targets=True)
-    print('______data______-', data)
     args.features_size = data.features_size()
+
+    if args.atom_descriptors == 'descriptor':
+        args.atom_descriptors_size = data.atom_descriptors_size()
+        args.ffn_hidden_size += args.atom_descriptors_size
+    elif args.atom_descriptors == 'feature':
+        args.atom_features_size = data.atom_features_size()
+        set_extra_atom_fdim(args.atom_features_size)
 
     debug(f'Number of tasks = {args.num_tasks}')
 
@@ -125,6 +133,7 @@ def cross_validate(args: TrainArgs,
     avg_scores_ts = np.nanmean(all_scores_ts[args.metric], axis=1)
     mean_score_ts, std_score_ts = np.nanmean(avg_scores_ts), np.nanstd(avg_scores_ts)
 
+    # Optionally merge and save test preds
     if args.save_preds:
         all_preds = pd.concat([pd.read_csv(os.path.join(save_dir, f'fold_{fold_num}', 'test_preds.csv'))
                                for fold_num in range(args.num_folds)])

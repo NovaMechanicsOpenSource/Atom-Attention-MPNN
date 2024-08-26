@@ -5,6 +5,7 @@ import pandas as pd
 
 from .predict import predict
 from .data import MoleculeDataLoader
+from .scaler import StandardScaler
 from .model import MoleculeModel
 from .utils import get_metric_func, confusion_matrix_
 
@@ -49,6 +50,7 @@ def evaluate_predictions(preds: List[List[float]],
 
         cf = confusion_matrix_(valid_targets[i], valid_preds[i])
         print('confusion_matrix_ ', cf)
+            
 
         if len(valid_targets[i]) == 0:
             continue
@@ -70,7 +72,9 @@ def evaluate(model: MoleculeModel,
              data_loader: MoleculeDataLoader,
              num_tasks: int,
              metrics: List[str],
+             scaler: StandardScaler = None,
              logger: logging.Logger = None) -> Dict[str, List[float]]:
-    preds = predict(model=model, data_loader=data_loader)
+    """Evaluates an ensemble of models on a dataset by making predictions and then evaluating the predictions."""
+    preds = predict(model=model, data_loader=data_loader, scaler=scaler)
     results, df1, df2 = evaluate_predictions(preds=preds, targets=data_loader.targets, num_tasks=num_tasks, metrics=metrics, logger=logger)
     return results, df1, df2

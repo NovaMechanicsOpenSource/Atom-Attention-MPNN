@@ -13,6 +13,8 @@ from tqdm import tqdm
 from .data import MoleculeDatapoint, MoleculeDataset
 from .scaffold import log_scaffold_stats, scaffold_split
 from .args import PredictArgs, TrainArgs
+from .features_utils import load_features, load_valid_atom_or_bond_features
+
 
 def preprocess_smiles_columns(path: str,
                               smiles_columns: Optional[Union[str, List[Optional[str]]]],
@@ -182,6 +184,7 @@ def get_data_MPN(path: str,
             path=path, smiles_columns=smiles_columns)
 
     max_data_size = max_data_size or float('inf')
+
     features_data = None
 
     with open(path) as f:
@@ -250,6 +253,29 @@ def split_data(data: MoleculeDataset,
                     split_indices.extend(pickle.load(rf))
             data_split.append([data[i] for i in split_indices])
         train, val, test = tuple(data_split)
+        return MoleculeDataset(train), MoleculeDataset(val), MoleculeDataset(test)
+
+    elif split_type == 'cv_original':
+        if num_folds <= 1 or num_folds > len(data):
+            raise ValueError(
+                'Number of folds for cross-validation must be between 2 and len(data), inclusive.')
+
+        random = Random(0)
+
+        indices = np.repeat(np.arange(num_folds), 1 + len(data) // num_folds)[:len(data)]
+        random.shuffle(indices)
+        test_index = seed % num_folds
+        val_index = (seed + 1) % num_folds
+
+        train, val, test = [], [], []
+        for d, index in zip(data, indices):
+            if index == test_index:
+                test.append(d)
+            elif index == val_index:
+                val.append(d)
+            else:
+                train.append(d)
+
         return MoleculeDataset(train), MoleculeDataset(val), MoleculeDataset(test)
 
     elif split_type == 'cv':

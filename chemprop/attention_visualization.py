@@ -1,4 +1,5 @@
 import os
+
 import numpy as np
 import torch
 from rdkit import Chem
@@ -26,7 +27,8 @@ def visualize_atom_attention(viz_dir: str,
     else:
         mol = smiles
         mol_name = Chem.MolToSmiles(mol)
-        print('Saving Similarity map of molecule: {0} ({1} atoms)'.format(mol_name, num_atoms))
+        print('Saving Similarity map of molecule: {0} ({1} atoms)'.format(
+            mol_name, num_atoms))
 
     smiles_viz_dir = viz_dir
     os.makedirs(smiles_viz_dir, exist_ok=True)
@@ -40,7 +42,8 @@ def visualize_atom_attention(viz_dir: str,
 
     nanMean = np.nanmean(Amean_weight)
 
-    save_path = os.path.join(smiles_viz_dir, f'{mol_name.replace("/", "")}.png')
+    save_path = os.path.join(
+        smiles_viz_dir, f'{mol_name.replace("/", "")}.png')
 
     fig = SimilarityMaps.GetSimilarityMapFromWeights(mol, Amean_weight-nanMean,
                                                      alpha=0.3,
