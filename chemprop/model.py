@@ -84,8 +84,8 @@ class MoleculeModel(nn.Module):
         
         if self.pretrained:
             self.encoder.eval()
-            with torch.no_grad():
-                output = self.encoder(batch)
+            #with torch.no_grad():
+            output = self.encoder(batch)
         else:
             output = self.encoder(batch)
             self.encoder.train()
