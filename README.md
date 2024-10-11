@@ -12,4 +12,6 @@ python train.py --data_path data/B3DB_class_data.csv --atom_attention --normaliz
 If we don't want to use the pretrained model:
 python train.py --data_path data/B3DB_class_data.csv --atom_attention --normalize_matrices --no_features_scaling --features_generator morgan_count --save_dir bbb_nopretrained/ --extra_metrics accuracy precision recall specificity
 
-<a href="https://doi.org/10.5281/zenodo.13919043"><img src="https://zenodo.org/badge/338898649.svg" alt="DOI"></a>
+
+<a href="https://doi.org/10.5281/zenodo.13919138"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.13919138.svg" alt="DOI"></a>
+
